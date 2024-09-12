@@ -18,6 +18,9 @@ jobs:
       run: |
         aws eks delete-cluster --name my-eks-cluster --region us-east-1
 
+  delete-EC2:
+    runs-on: ubuntu-latest
+    steps:      
     - name: Delete EC2 Instance
       run: |
         INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=JenkinsEC2Instance" --query "Reservations[].Instances[].InstanceId" --output text)
