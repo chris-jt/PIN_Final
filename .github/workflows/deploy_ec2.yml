@@ -195,7 +195,7 @@ jobs:
       env:
         PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
       run: |
-          chmod 400 ${{ env.KEY_NAME }}.pem
+          cchmod 400 jenkins.pem
           scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/create_eks_cluster.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
           ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/create_eks_cluster.sh && sudo /home/ubuntu/create_eks_cluster.sh'
 
@@ -217,7 +217,7 @@ jobs:
       env:
         PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
       run: |
-          chmod 400 ${{ env.KEY_NAME }}.pem
+          chmod 400 jenkins.pem
           scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/deploy_nginx.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
           EXTERNAL_IP=$(ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/deploy_nginx.sh && sudo /home/ubuntu/deploy_nginx.sh | grep EXTERNAL_IP= | cut -d= -f2')
           echo "nginx_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
@@ -241,7 +241,7 @@ jobs:
         env:
           PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
         run: |
-          chmod 400 ${{ env.KEY_NAME }}.pem
+          chmod 400 jenkins.pem
           scp -i jenkins.pem -o StrictHostKeyChecking=no 04_monitoreo/setup_monitoring.sh 04_monitoreo/grafana-values.yaml ubuntu@$PUBLIC_IP:/home/ubuntu/
           ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/setup_monitoring.sh && sudo /home/ubuntu/setup_monitoring.sh'
 
