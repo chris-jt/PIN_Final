@@ -190,6 +190,8 @@ jobs:
   deploy-nginx:
     needs: create-eks-cluster
     runs-on: ubuntu-latest
+    outputs:
+      nginx_url: ${{ steps.deploy.outputs.nginx_url }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -205,25 +207,41 @@ jobs:
       run: |
           chmod 400 jenkins.pem
           scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/deploy_nginx.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
-          ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/deploy_nginx.sh && sudo /home/ubuntu/deploy_nginx.sh'          
-
+          EXTERNAL_IP=$(ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/deploy_nginx.sh && sudo /home/ubuntu/deploy_nginx.sh | grep EXTERNAL_IP= | cut -d= -f2')
+          echo "nginx_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+       
   setup-monitoring:
     needs: deploy-nginx
     runs-on: ubuntu-latest
+    outputs:
+     grafana_url: ${{ steps.monitoring.outputs.grafana_url }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-        
-    - name: Download Key Pair
-      uses: actions/download-artifact@v4
-      with:
-        name: ec2-key-pair
-        
-    - name: Setup Monitoring
-      env:
-        PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
-      run: |
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Key Pair
+        uses: actions/download-artifact@v4
+        with:
+          name: ec2-key-pair
+
+      - name: Setup Monitoring
+        id: monitoring
+        env:
+          PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
+        run: |
           chmod 400 jenkins.pem
-          scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/setup_monitoring.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
+          scp -i jenkins.pem -o StrictHostKeyChecking=no 04_monitoreo/setup_monitoring.sh 04_monitoreo/grafana-values.yaml ubuntu@$PUBLIC_IP:/home/ubuntu/
           ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/setup_monitoring.sh && sudo /home/ubuntu/setup_monitoring.sh'
 
+  display-url:
+    needs: [deploy-nginx, setup-monitoring]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Display Nginx URL
+      run: |
+          echo "La aplicación Nginx está disponible en: ${{ needs.deploy-nginx.outputs.nginx_url }}"
+          echo "Grafana está disponible en: ${{ needs.setup-monitoring.outputs.grafana_url }}"
+          echo "Usuario de Grafana: admin"
+          echo "Contraseña de Grafana: EKS!sAWSome"
+          echo "Prometheus está disponible en: http://${{ needs.deploy-ec2.outputs.public_ip }}:8080"
+          echo "Puede tardar unos minutos en estar completamente accesible."

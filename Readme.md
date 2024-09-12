@@ -1,49 +1,57 @@
-# Proyecto Devops 2023
+# Proyecto Devops 2024
 
 
 Este proyecto tiene como idea principal el aprendizaje sobre distintos temas y poner en práctica lo aprendido a través de un laboratorio que permita integrar diferentes herramientas y tecnologías.
 
-Durante la  primera parte nos centramos en la creación de una instancia de `EC2` en AWS para poder desde allí realizar todas las tareas
- necesarias. 
+Durante la  primera parte nos centramos en la creación de una instancia de `EC2` en AWS para poder desde allí realizar todas las tareas necesarias. 
 
+dentro de esta instancia crear un Cluster con eksctl y cloudFormation.
 
-En la segunda parte, configuraremos monitoreo de log con el stack de  `Elastic`, `FluentBit` y `Kibana`, el cual nos permitio ver los logs 
-de nginx corriendo el el cluster 
-Por último, configuramos la part de monitoreo de pods con el stack de `prometheus` y `grafana` `Prometheus`
+El objetivo es desplegar un pod de nginx, utilizando cualquier metodo valido, hasta la misma consola de aws
+Instalar herramientas de monitoreo de pods 
 
+Workflow:
 
+    Crea una instancia EC2.
+    Instala las herramientas necesarias en la instancia.
+    Crea un cluster EKS.
+    Instala el driver EBS CSI.
+    Despliega un pod de Nginx.
+    Instala Prometheus y Grafana para monitoreo.
 
-![arquitectura](img/arquitecture.png)
+Pasos detallados:
 
-## Contenido del proyecto
+    La instancia EC2 se crea con las herramientas necesarias (Docker, kubectl, eksctl, etc.).
+    Se crea un cluster EKS usando eksctl.
+    Se actualiza el kubeconfig para interactuar con el cluster.
+    Se instala el driver EBS CSI para soporte de volúmenes persistentes.
+    Se despliega un Deployment y un Service de Nginx.
+    Se instala Prometheus y Grafana para monitoreo usando Helm.
 
-1. Crear y configurar instancia EC2
+Para usar este workflow:
 
-2. Configurar instancia y cliente aws
+    Se Agregan los archivos ec2_user_data.sh, create_eks_cluster.sh, deploy_nginx y setup_monitoring.
+    Ajustar los permisos de los scripts antes de commitearlos al repositorio
+        
+        chmod +x create_eks_cluster.sh
+        chmod +x deploy_nginx.sh
+        chmod +x setup_monitoring.sh
+        chmod +x ec2_user_data.sh
+        Alternativa para dar permisos a todos--> find . -name "*.sh" -exec chmod +x {} \;
 
-3. Crear cluster con eksctl
+    Las credenciales de AWS tienen los permisos necesarios para crear recursos EC2 y EKS.
+    Se ejecuta el workflow desde la interfaz de GitHub Actions.
 
-4. Crear cluster con terraform
+El workflow para que al final del proceso, muestra la URL donde se puede acceder a la página con el mensaje "HOLA MUNDO DESDE PIN_Final".
 
-5. Configurar kubectl
+    En el script deploy_nginx.sh, creamos un ConfigMap con un archivo HTML personalizado que contiene el mensaje "HOLA MUNDO DESDE PIN_Final".
 
-6. Github Actions
+    El Deployment de Nginx monta este ConfigMap como un volumen, reemplazando el archivo index.html predeterminado.
 
-9. Herramientas de monitoreo
+    Se añade un bucle para esperar hasta que el servicio de LoadBalancer obtenga una IP externa.
 
+    En el job deploy-nginx del workflow, capturamos la IP externa y la guardamos como output del job.
 
-# Bibliografía
+    El job display-url al final del workflow que muestra la URL de la aplicación Nginx.
 
-<!-- #  Docker Compose Examples // -->
-
-<!--
-- [Compose101 Slides](https://www.slideshare.net/ajeetraina/introduction-to-docker-compose-docker-intermediate-workshop)
-- [Introduction to Docker Compose](http://dockerlabs.collabnix.com/intermediate/docker-compose/)
-- [Dockerfile Vs Docker compose ](http://dockerlabs.collabnix.com/intermediate/workshop/DockerCompose/Difference_between_dockerfile_and_docker_compose.html)
-- [How to Install Docker Compose? ](http://dockerlabs.collabnix.com/intermediate/workshop/DockerCompose/How_to_Install_Docker_Compose.html)
-
-### Kubernetes
-- [Setup AWS Free Tier](https://cloudkatha.com/how-to-setup-your-aws-free-tier-account-the-right-way/)
-
-### Monitoreo
--->
+El workflow delete.yaml eliminará todos los recursos creados en AWS, incluyendo el cluster EKS, la instancia EC2, la VPC y sus recursos asociados, el key pair y los roles IAM.
