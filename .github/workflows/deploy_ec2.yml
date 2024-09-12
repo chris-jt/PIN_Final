@@ -195,7 +195,7 @@ jobs:
       env:
         PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
       run: |
-          cchmod 400 jenkins.pem
+          chmod 400 jenkins.pem
           scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/create_eks_cluster.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
           ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/create_eks_cluster.sh && sudo /home/ubuntu/create_eks_cluster.sh'
 
