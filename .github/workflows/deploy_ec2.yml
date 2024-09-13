@@ -138,8 +138,9 @@ jobs:
     - name: Get EC2 Public IP
       id: get_ip
       run: |
-            PPUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+            PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
             echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+            echo "Public IP: $PUBLIC_IP"
 
     - name: Upload Key Pair
       if: env.KEY_CREATED == 'true'
@@ -200,27 +201,49 @@ jobs:
           ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/create_eks_cluster.sh && sudo /home/ubuntu/create_eks_cluster.sh'
 
   deploy-nginx:
-    needs: create-eks-cluster
+    needs: [deploy-ec2, create-eks-cluster]
     runs-on: ubuntu-latest
     outputs:
       nginx_url: ${{ steps.deploy.outputs.nginx_url }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-        
+                
     - name: Download Key Pair
       uses: actions/download-artifact@v4
       with:
         name: ec2-key-pair
-        
+                
     - name: Deploy Nginx
+      id: deploy
       env:
         PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
       run: |
+          if [ -z "$PUBLIC_IP" ]; then
+            echo "Error: PUBLIC_IP is not set"
+            echo "Value of needs.deploy-ec2.outputs.public_ip: ${{ needs.deploy-ec2.outputs.public_ip }}"
+          exit 1
+          fi
+                
+          echo "Public IP: $PUBLIC_IP"
+                
+          if [ ! -f "jenkins.pem" ]; then
+            echo "Error: jenkins.pem not found"
+            ls -la
+            exit 1
+          fi
+                
           chmod 400 jenkins.pem
           scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/deploy_nginx.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
           EXTERNAL_IP=$(ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/deploy_nginx.sh && sudo /home/ubuntu/deploy_nginx.sh | grep EXTERNAL_IP= | cut -d= -f2')
+                
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "Error: EXTERNAL_IP is not set"
+            exit 1
+          fi
+                
           echo "nginx_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "Nginx URL: http://$EXTERNAL_IP"
        
   setup-monitoring:
     needs: deploy-nginx
