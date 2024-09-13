@@ -22,6 +22,10 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
+    - name: Verify AWS credentials
+      run: |
+          aws sts get-caller-identity
+          aws iam get-user
 
   crear_roles: 
     runs-on: ubuntu-latest 
@@ -29,61 +33,60 @@ jobs:
     steps:      
     - name: Create IAM Role for EC2
       run: |
-          # Crear una política de confianza para EC2
-          cat > trust-policy.json <<EOF
+        set -x
+        # Crear una política de confianza para EC2
+        cat > trust-policy.json <<EOF
+        {
+        "Version": "2012-10-17",
+        "Statement": [
           {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Principal": {
-                  "Service": "ec2.amazonaws.com"
-                },
-                "Action": "sts:AssumeRole"
-              }
-            ]
-          }
-          EOF
-      
-          # Crear el rol IAM
-          aws iam create-role --role-name EC2EKSRole --assume-role-policy-document file://trust-policy.json
-      
-          # Adjuntar las políticas necesarias al rol
-          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
-          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
-          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
-          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
-      
-          # Crear un perfil de instancia y asociar el rol
-          aws iam create-instance-profile --instance-profile-name EC2EKSProfile
-          aws iam add-role-to-instance-profile --instance-profile-name EC2EKSProfile --role-name EC2EKSRole
-      
-          # Esperar a que el perfil de instancia esté disponible
-          echo "Esperando a que el perfil de instancia esté disponible..."
-          aws iam wait instance-profile-exists --instance-profile-name EC2EKSProfile
-      
-          echo "Rol IAM y perfil de instancia creados exitosamente"
-      
-    - name: Launch EC2 Instance
-      run: |
-          INSTANCE_ID=$(aws ec2 run-instances \
-            --image-id ami-053b0d53c279acc90 \
-            --count 1 \
-            --instance-type t2.micro \
-            --key-name ${{ env.KEY_NAME }} \
-            --security-group-ids ${{ steps.security_group.outputs.group_id }} \
-            --iam-instance-profile Name=EC2EKSProfile \
-            --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Jenkins}]' \
-            --query 'Instances[0].InstanceId' \
-            --output text)
-          
-          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          
-          echo "Esperando a que la instancia esté en estado 'running'..."
-          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-          
-          echo "Instancia EC2 lanzada con éxito. ID: $INSTANCE_ID"
-          
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "ec2.amazonaws.com"
+          },
+          "Action": "sts:AssumeRole"
+        }
+        ]
+        }
+        EOF
+
+        #  Crear el rol IAM
+        if ! aws iam create-role --role-name EC2EKSRole --assume-role-policy-document file://trust-policy.json; then
+          echo "Error al crear el rol. Verificando si ya existe..."
+        if aws iam get-role --role-name EC2EKSRole; then
+          echo "El rol ya existe. Continuando..."
+        else
+          echo "No se pudo crear el rol y no existe. Saliendo..."
+        exit 1
+        fi
+        fi
+
+        # Adjuntar las políticas necesarias al rol
+        for policy in AmazonEKSClusterPolicy AmazonEKSWorkerNodePolicy AmazonEC2ContainerRegistryFullAccess AmazonEKS_CNI_Policy; do
+          if ! aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/$policy; then
+            echo "Error al adjuntar la política $policy. Continuando..."
+          fi
+        done
+
+        # Crear un perfil de instancia y asociar el rol
+        if ! aws iam create-instance-profile --instance-profile-name EC2EKSProfile; then
+          echo "Error al crear el perfil de instancia. Verificando si ya existe..."
+        if ! aws iam get-instance-profile --instance-profile-name EC2EKSProfile; then
+          echo "No se pudo crear el perfil de instancia y no existe. Saliendo..."
+        exit 1
+        fi
+        fi
+
+        if ! aws iam add-role-to-instance-profile --instance-profile-name EC2EKSProfile --role-name EC2EKSRole; then
+          echo "Error al añadir el rol al perfil de instancia. Puede que ya esté asociado."
+        fi
+
+        # Esperar a que el perfil de instancia esté disponible
+        echo "Esperando a que el perfil de instancia esté disponible..."
+        aws iam wait instance-profile-exists --instance-profile-name EC2EKSProfile
+
+        echo "Rol IAM y perfil de instancia creados o verificados exitosamente"
+   
   deploy-ec2: 
     runs-on: ubuntu-latest    
     needs: crear_roles 
