@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy-ec2:
+  configurar_credenciales:
     runs-on: ubuntu-latest
     outputs:
       public_ip: ${{ steps.get_ip.outputs.public_ip }}
@@ -23,6 +23,69 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
+  crear_role: 
+    runs-on: ubuntu-latest      
+    steps:      
+    - name: Create IAM Role for EC2
+      run: |
+          # Crear una política de confianza para EC2
+          cat > trust-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ec2.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          EOF
+      
+          # Crear el rol IAM
+          aws iam create-role --role-name EC2EKSRole --assume-role-policy-document file://trust-policy.json
+      
+          # Adjuntar las políticas necesarias al rol
+          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+          aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      
+          # Crear un perfil de instancia y asociar el rol
+          aws iam create-instance-profile --instance-profile-name EC2EKSProfile
+          aws iam add-role-to-instance-profile --instance-profile-name EC2EKSProfile --role-name EC2EKSRole
+      
+          # Esperar a que el perfil de instancia esté disponible
+          echo "Esperando a que el perfil de instancia esté disponible..."
+          aws iam wait instance-profile-exists --instance-profile-name EC2EKSProfile
+      
+          echo "Rol IAM y perfil de instancia creados exitosamente"
+      
+    - name: Launch EC2 Instance
+      run: |
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id ami-053b0d53c279acc90 \
+            --count 1 \
+            --instance-type t2.micro \
+            --key-name ${{ env.KEY_NAME }} \
+            --security-group-ids ${{ steps.security_group.outputs.group_id }} \
+            --iam-instance-profile Name=EC2EKSProfile \
+            --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Jenkins}]' \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+          
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          
+          echo "Esperando a que la instancia esté en estado 'running'..."
+          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+          
+          echo "Instancia EC2 lanzada con éxito. ID: $INSTANCE_ID"
+          
+  crear_instancia_EC2: 
+    runs-on: ubuntu-latest      
+    steps:  
     - name: Deploy EC2 instance
       env:
         PUBLIC_IP: ${{ env.PUBLIC_IP }}
@@ -95,11 +158,13 @@ jobs:
               --image-id $AMI_ID \
               --instance-type $INSTANCE_TYPE \
               --key-name $KEY_NAME \
-              --security-group-ids $SECURITY_GROUP_ID \
+              --security-group-ids ${{ steps.security_group.outputs.group_id }} \
+              --iam-instance-profile Name=EC2EKSProfile \
+              #--security-group-ids $SECURITY_GROUP_ID \
               --user-data file://00_ec2/ec2_user_data.sh \
               --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":8,"VolumeType":"gp2"}}]' \
               --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Jenkins}]' \
-              --iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
+              #--iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
               --query 'Instances[0].InstanceId' \
               --output text)
   

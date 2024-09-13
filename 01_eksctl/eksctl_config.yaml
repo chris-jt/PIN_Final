@@ -1,0 +1,23 @@
+- name: Create eksctl config file
+  run: |
+    cat > 01_eksctl/eksctl_config.yaml <<EOF
+    apiVersion: eksctl.io/v1alpha5
+    kind: ClusterConfig
+
+    metadata:
+      name: jenkins-cluster
+      region: us-east-1
+
+    managedNodeGroups:
+      - name: ng-1
+        instanceType: t3.small
+        minSize: 2
+        maxSize: 4
+        desiredCapacity: 3
+        privateNetworking: true
+
+    # Add any additional configurations as needed
+
+    EOF
+    
+    cat 01_eksctl/eksctl_config.yaml

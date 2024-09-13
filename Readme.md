@@ -28,6 +28,22 @@ Pasos detallados:
     Se despliega un Deployment y un Service de Nginx.
     Se instala Prometheus y Grafana para monitoreo usando Helm.
 
+
+
+    Crean un rol IAM llamado EC2EKSRole con una política de confianza que permite a EC2 asumir este rol.
+
+    Adjuntan las políticas necesarias al rol:
+        AmazonEKSClusterPolicy
+        AmazonEKSWorkerNodePolicy
+        AmazonEC2ContainerRegistryFullAccess
+        AmazonEKS_CNI_Policy
+
+    Crean un perfil de instancia llamado EC2EKSProfile y asocian el rol a este perfil.
+
+    Esperan a que el perfil de instancia esté disponible.
+
+    Lanzan la instancia EC2 con el perfil de instancia recién creado.
+
 Para usar este workflow:
 
     Se Agregan los archivos ec2_user_data.sh, create_eks_cluster.sh, deploy_nginx y setup_monitoring.
