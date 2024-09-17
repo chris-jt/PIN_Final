@@ -8,6 +8,10 @@ wait_for_apt() {
     sleep 5
   done
 }
+sudo rm /var/lib/apt/lists/lock
+sudo rm /var/cache/apt/archives/lock
+sudo rm /var/lib/dpkg/lock*
+sudo dpkg --configure -a
 
 echo "Installing Unzip"
 wait_for_apt
