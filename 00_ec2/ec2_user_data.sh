@@ -1,7 +1,16 @@
 #!/bin/bash
 set -e  # Exit immediately if a command exits with a non-zero status
 
+# Función para esperar a que apt esté disponible
+wait_for_apt() {
+  while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 ; do
+    echo "Esperando a que otras operaciones de apt terminen..."
+    sleep 5
+  done
+}
+
 echo "Installing Unzip"
+wait_for_apt
 sudo apt-get update
 sudo apt-get install -y unzip
 unzip -v
@@ -13,6 +22,7 @@ sudo ./aws/install --update
 aws --version
 
 echo "Installing kubectl"
+wait_for_apt
 sudo apt-get install -y kubectl
 curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.30.2/2024-07-12/bin/linux/amd64/kubectl
 chmod +x ./kubectl
@@ -26,6 +36,7 @@ sudo mv /tmp/eksctl /usr/local/bin
 eksctl version
 
 echo "Installing Docker"
+wait_for_apt
 sudo apt-get install -y docker.io
 sudo systemctl start docker
 sudo systemctl enable docker
