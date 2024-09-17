@@ -8,9 +8,11 @@ wait_for_apt() {
     sleep 5
   done
 }
-sudo rm /var/lib/apt/lists/lock
-sudo rm /var/cache/apt/archives/lock
-sudo rm /var/lib/dpkg/lock*
+# Al inicio del script
+echo "Limpiando posibles bloqueos de apt..."
+sudo rm -f /var/lib/apt/lists/lock
+sudo rm -f /var/cache/apt/archives/lock
+sudo rm -f /var/lib/dpkg/lock*
 sudo dpkg --configure -a
 
 echo "Installing Unzip"
