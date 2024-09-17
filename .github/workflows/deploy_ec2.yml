@@ -31,39 +31,25 @@ jobs:
     runs-on: ubuntu-latest 
     needs: configurar_credenciales     
     steps:      
-    - name: Create IAM Role for EC2
+    - name: Attempt manual role creation
       run: |
-        set -x
-        # Crear una política de confianza para EC2
-        cat > trust-policy.json <<EOF
-        {
+        TRUST_POLICY='{
         "Version": "2012-10-17",
         "Statement": [
           {
-          "Effect": "Allow",
-          "Principal": {
+            "Effect": "Allow",
+            "Principal": {
             "Service": "ec2.amazonaws.com"
-          },
-          "Action": "sts:AssumeRole"
-        }
-        ]
-        }
-        EOF
-
-        #  Crear el rol IAM
-        if ! aws iam create-role --role-name EC2EKSRole --assume-role-policy-document file://trust-policy.json; then
-          echo "Error al crear el rol. Verificando si ya existe..."
-        if aws iam get-role --role-name EC2EKSRole; then
-          echo "El rol ya existe. Continuando..."
-        else
-          echo "No se pudo crear el rol y no existe. Saliendo..."
-        exit 1
-        fi
-        fi
+            },
+            "Action": "sts:AssumeRole"
+          }
+          ]
+          }'
+        aws iam create-role --role-name EC2EKSRole --assume-role-policy-document "$TRUST_POLICY"
 
         # Adjuntar las políticas necesarias al rol
-        for policy in AmazonEKSClusterPolicy AmazonEKSWorkerNodePolicy AmazonEC2ContainerRegistryFullAccess AmazonEKS_CNI_Policy; do
-          if ! aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/$policy; then
+          for policy in AmazonEKSClusterPolicy AmazonEKSWorkerNodePolicy AmazonEC2ContainerRegistryFullAccess AmazonEKS_CNI_Policy; do
+            if ! aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/$policy; then
             echo "Error al adjuntar la política $policy. Continuando..."
           fi
         done
