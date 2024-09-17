@@ -1,16 +1,11 @@
 name: Deploy EC2, EKS y Nginx
 
 on:
-  #push:
-  #  branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  configurar_credenciales:
+  deploy:
     runs-on: ubuntu-latest
-    outputs:
-      public_ip: ${{ steps.get_ip.outputs.public_ip }}
-      key_created: ${{ steps.create_instance.outputs.key_created }}
     
     steps:
     - name: Checkout code
@@ -22,194 +17,158 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
+
     - name: Verify AWS credentials
       run: |
-          aws sts get-caller-identity
-          aws iam get-user
-  
-  deploy-ec2: 
-    runs-on: ubuntu-latest    
-    needs: configurar_credenciales 
-    steps:  
+        aws sts get-caller-identity
+        aws iam get-user
+
     - name: Deploy EC2 instance
       env:
-        PUBLIC_IP: ${{ env.PUBLIC_IP }}
-
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: us-east-1
       run: |
-          # Definir variables
-          REGION="us-east-1"
-          AMI_ID=$(aws ec2 describe-images --owners 099720109477 --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*" "Name=state,Values=available" --query "Images[0].ImageId" --output text --region $REGION)
-          INSTANCE_TYPE="t2.small"
-          KEY_NAME="jenkins"
-          SECURITY_GROUP_NAME="jenkins-sg"
-          ROLE_NAME="ec2-admin-role"
-          INSTANCE_PROFILE_NAME="ec2-admin-profile"
-          echo "KEY_NAME=$KEY_NAME" >> $GITHUB_ENV
+        # Definir variables
+        REGION="us-east-1"
+        AMI_ID=$(aws ec2 describe-images --owners 099720109477 --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*" "Name=state,Values=available" --query "Images[0].ImageId" --output text --region $REGION)
+        INSTANCE_TYPE="t2.small"
+        KEY_NAME="jenkins"
+        SECURITY_GROUP_NAME="jenkins-sg"
+        ROLE_NAME="ec2-admin-role"
+        INSTANCE_PROFILE_NAME="ec2-admin-profile"
+        echo "KEY_NAME=$KEY_NAME" >> $GITHUB_ENV
 
-          # Verificar existencia del archivo de datos de usuario
-          if [ ! -f "00_ec2/ec2_user_data.sh" ]; then
-            echo "Error: ec2_user_data.sh not found"
-            exit 1
-          fi
+        # Verificar existencia del archivo de datos de usuario
+        if [ ! -f "00_ec2/ec2_user_data.sh" ]; then
+          echo "Error: ec2_user_data.sh not found"
+          exit 1
+        fi
 
-          # Crear Key Pair (si no existe)
-          if ! aws ec2 describe-key-pairs --key-names $KEY_NAME >/dev/null 2>&1; then
-            aws ec2 create-key-pair --key-name $KEY_NAME --query 'KeyMaterial' --output text > $GITHUB_WORKSPACE/${KEY_NAME}.pem
-            chmod 400 $GITHUB_WORKSPACE/${KEY_NAME}.pem
-            mkdir -p $GITHUB_WORKSPACE/artifacts
-            cp $GITHUB_WORKSPACE/${KEY_NAME}.pem $GITHUB_WORKSPACE/artifacts/
-            echo "New key pair 'jenkins' was created. The private key is included in this artifact." > $GITHUB_WORKSPACE/artifacts/README.txt
-            echo "New key pair $KEY_NAME created"
-            KEY_CREATED=true
-          else
-            echo "Key pair $KEY_NAME already exists"
-            KEY_CREATED=false
-          fi
+        # Crear Key Pair (si no existe)
+        if ! aws ec2 describe-key-pairs --key-names $KEY_NAME >/dev/null 2>&1; then
+          aws ec2 create-key-pair --key-name $KEY_NAME --query 'KeyMaterial' --output text > $GITHUB_WORKSPACE/${KEY_NAME}.pem
+          chmod 400 $GITHUB_WORKSPACE/${KEY_NAME}.pem
+          mkdir -p $GITHUB_WORKSPACE/artifacts
+          cp $GITHUB_WORKSPACE/${KEY_NAME}.pem $GITHUB_WORKSPACE/artifacts/
+          echo "New key pair 'jenkins' was created. The private key is included in this artifact." > $GITHUB_WORKSPACE/artifacts/README.txt
+          echo "New key pair $KEY_NAME created"
+          echo "KEY_CREATED=true" >> $GITHUB_ENV
+        else
+          echo "Key pair $KEY_NAME already exists"
+          echo "KEY_CREATED=false" >> $GITHUB_ENV
+        fi
 
-          # Crear Security Group (si no existe)
-          if ! aws ec2 describe-security-groups --group-names $SECURITY_GROUP_NAME >/dev/null 2>&1; then
-            SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "Security group for Jenkins" --query 'GroupId' --output text)
-            
-            # Configurar reglas de Security Group
-            aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
-            aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 8080 --cidr 0.0.0.0/0
-          else
-            SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --group-names $SECURITY_GROUP_NAME --query 'SecurityGroups[0].GroupId' --output text)
-            echo "Security group $SECURITY_GROUP_NAME already exists with ID $SECURITY_GROUP_ID"
-          fi
-  
-          # Crear IAM Role (si no existe)
-          if ! aws iam get-role --role-name $ROLE_NAME >/dev/null 2>&1; then
-            aws iam create-role --role-name $ROLE_NAME --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Principal": {"Service": "ec2.amazonaws.com"},"Action": "sts:AssumeRole"}]}'
-            aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
-          else
-            echo "IAM Role $ROLE_NAME already exists"
-          fi
-  
-          # Crear Instance Profile (si no existe)
-          if ! aws iam get-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME >/dev/null 2>&1; then
-            aws iam create-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME
-            aws iam add-role-to-instance-profile --role-name $ROLE_NAME --instance-profile-name $INSTANCE_PROFILE_NAME
-            
-            # Esperar a que el perfil de instancia esté disponible
-            echo "Waiting for instance profile to be ready..."
-            sleep 10
-          else
-            echo "Instance Profile $INSTANCE_PROFILE_NAME already exists"
-          fi
-  
-          # Lanzar instancia EC2
-          INSTANCE_ID=$(aws ec2 run-instances \
-              --image-id $AMI_ID \
-              --instance-type $INSTANCE_TYPE \
-              --key-name $KEY_NAME \         
-              --security-group-ids $SECURITY_GROUP_ID \
-              --user-data file://00_ec2/ec2_user_data.sh \
-              --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":8,"VolumeType":"gp2"}}]' \
-              --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Jenkins}]' \
-              --iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
-              --query 'Instances[0].InstanceId' \
-              --output text)
-  
-          echo "Instancia EC2 creada con ID: $INSTANCE_ID"
-  
-          # Esperar a que la instancia esté en estado 'running'
-          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-  
-          echo "La instancia EC2 está en ejecución"
-  
-          # Guardar información sobre la creación de la clave
-          echo "KEY_CREATED=$KEY_CREATED" >> $GITHUB_ENV
+        # Crear Security Group (si no existe)
+        if ! aws ec2 describe-security-groups --group-names $SECURITY_GROUP_NAME >/dev/null 2>&1; then
+          SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "Security group for Jenkins" --query 'GroupId' --output text)
+          
+          # Configurar reglas de Security Group
+          aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+          aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 8080 --cidr 0.0.0.0/0
+        else
+          SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --group-names $SECURITY_GROUP_NAME --query 'SecurityGroups[0].GroupId' --output text)
+          echo "Security group $SECURITY_GROUP_NAME already exists with ID $SECURITY_GROUP_ID"
+        fi
 
-          # Obtener la IP pública de la instancia
-          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-  
-          echo "IP pública de la instancia: $PUBLIC_IP"
-          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+        # Crear IAM Role (si no existe)
+        if ! aws iam get-role --role-name $ROLE_NAME >/dev/null 2>&1; then
+          aws iam create-role --role-name $ROLE_NAME --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{"Effect": "Allow","Principal": {"Service": "ec2.amazonaws.com"},"Action": "sts:AssumeRole"}]}'
+          aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+        else
+          echo "IAM Role $ROLE_NAME already exists"
+        fi
 
-          echo "Esperando que la instancia se inicialice completamente..."
-          sleep 120
+        # Crear Instance Profile (si no existe)
+        if ! aws iam get-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME >/dev/null 2>&1; then
+          aws iam create-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME
+          aws iam add-role-to-instance-profile --role-name $ROLE_NAME --instance-profile-name $INSTANCE_PROFILE_NAME
+          
+          # Esperar a que el perfil de instancia esté disponible
+          echo "Waiting for instance profile to be ready..."
+          sleep 10
+        else
+          echo "Instance Profile $INSTANCE_PROFILE_NAME already exists"
+        fi
 
-          if [ "$KEY_CREATED" = true ]; then
-            # Asegurar que la clave tenga los permisos correctos
-            chmod 400 $GITHUB_WORKSPACE/${KEY_NAME}.pem
-            
-            # Copiar el script ec2_user_data.sh a la instancia
-            scp -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no 00_ec2/ec2_user_data.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
+        # Lanzar instancia EC2
+        INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id $AMI_ID \
+            --instance-type $INSTANCE_TYPE \
+            --key-name $KEY_NAME \
+            --security-group-ids $SECURITY_GROUP_ID \
+            --iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
+            --user-data file://00_ec2/ec2_user_data.sh \
+            --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Jenkins}]' \
+            --query 'Instances[0].InstanceId' \
+            --output text)
 
-            # Ejecutar el script en la instancia
-            ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/ec2_user_data.sh && sudo /home/ubuntu/ec2_user_data.sh'
-          else
-            echo "Clave no creada en este run. No se puede conectar a la instancia."
-          fi
+        echo "EC2 instance $INSTANCE_ID is being launched"
 
-    - name: Get EC2 Public IP
-      id: get_ip
-      run: |
-            PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-            echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
-            echo "Public IP: $PUBLIC_IP"
+        # Esperar a que la instancia esté en ejecución
+        aws ec2 wait instance-running --instance-ids $INSTANCE_ID
 
-    - name: Upload Key Pair
-      if: env.KEY_CREATED == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: ec2-key-pair
-        path: ${{ github.workspace }}/${{ env.KEY_NAME }}.pem
+        # Obtener la IP pública de la instancia
+        PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+        echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+        echo "EC2 instance is now running with Public IP: $PUBLIC_IP"
 
-  setup-ec2-and-eks:
-    needs: deploy-ec2
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download Key Pair
-      uses: actions/download-artifact@v4
-      with:
-        name: ec2-key-pair
-      
-    - name: Setup EC2 Instance and Create EKS Cluster
+    - name: Setup EC2 and Create EKS Cluster
       env:
-        PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: us-east-1
+        PUBLIC_IP: ${{ env.PUBLIC_IP }}
       run: |
         if [ -z "$PUBLIC_IP" ]; then
-         echo "Error: PUBLIC_IP is not set"
-        exit 1
+          echo "Error: PUBLIC_IP is not set"
+          exit 1
         fi
-    
+
         # Verificar que el archivo jenkins.pem existe
-        if [ ! -f "jenkins.pem" ]; then
-         echo "Error: jenkins.pem not found"
-         ls -la
-         exit 1
+        if [ ! -f "$GITHUB_WORKSPACE/${KEY_NAME}.pem" ]; then
+          echo "Error: ${KEY_NAME}.pem not found"
+          ls -la $GITHUB_WORKSPACE
+          exit 1
         fi
-        chmod 400 jenkins.pem
+        chmod 400 $GITHUB_WORKSPACE/${KEY_NAME}.pem
+        
+        # Esperar a que la instancia esté lista para conexiones SSH
+        echo "Waiting for instance to be ready for SSH connections..."
+        while ! ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$PUBLIC_IP echo "SSH connection successful" > /dev/null 2>&1; do
+          echo "Retrying SSH connection..."
+          sleep 10
+        done
+
         # Copiar y ejecutar el script de configuración
-        scp -i jenkins.pem -o StrictHostKeyChecking=no 00_ec2/ec2_user_data.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
-        ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/ec2_user_data.sh && sudo /home/ubuntu/ec2_user_data.sh'
-
+        scp -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no 00_ec2/ec2_user_data.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
+        ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/ec2_user_data.sh && sudo /home/ubuntu/ec2_user_data.sh'
+        
         # Crear cluster EKS
-        ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP << EOF
-        eksctl create cluster --name my-cluster --region us-east-1 --nodegroup-name standard-workers --node-type t3.medium --nodes 3 --nodes-min 1 --nodes-max 4 --ssh-public-key jenkins
-
-        # Configurar kubectl
-        aws eks get-token --cluster-name my-cluster | kubectl apply -f -
+        ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP << EOF
+          eksctl create cluster --name my-cluster --region us-east-1 --nodegroup-name standard-workers --node-type t3.medium --nodes 3 --nodes-min 1 --nodes-max 4 --ssh-public-key jenkins
           
-        # Desplegar NGINX
-        kubectl create deployment nginx --image=nginx
-        kubectl expose deployment nginx --type=LoadBalancer --port=80
+          # Configurar kubectl
+          aws eks get-token --cluster-name my-cluster | kubectl apply -f -
           
-        # Esperar a que el servicio esté disponible
-        echo "Esperando a que el servicio de NGINX esté disponible..."
-        kubectl wait --for=condition=available --timeout=300s deployment/nginx
+          # Desplegar NGINX
+          kubectl create deployment nginx --image=nginx
+          kubectl expose deployment nginx --type=LoadBalancer --port=80
           
-        # Obtener la URL del balanceador de carga
-        NGINX_URL=$(kubectl get service nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-        echo "NGINX está disponible en: http://$NGINX_URL"
-        EOF
+          # Esperar a que el servicio esté disponible
+          echo "Esperando a que el servicio de NGINX esté disponible..."
+          kubectl wait --for=condition=available --timeout=300s deployment/nginx
+          
+          # Obtener la URL del balanceador de carga
+          NGINX_URL=$(kubectl get service nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "NGINX está disponible en: http://$NGINX_URL"
+          EOF
 
     - name: Configure IAM user for EKS console access
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: us-east-1
       run: |
         # Obtener el ARN del rol IAM asociado al cluster EKS
         ROLE_ARN=$(aws eks describe-cluster --name my-cluster --query "cluster.roleArn" --output text)
