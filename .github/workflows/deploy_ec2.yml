@@ -122,14 +122,14 @@ jobs:
       run: |
         if [ -z "$PUBLIC_IP" ]; then
           echo "Error: PUBLIC_IP is not set"
-          exit 1
+          exit 100
         fi
 
         # Verificar que el archivo jenkins.pem existe
         if [ ! -f "$GITHUB_WORKSPACE/${KEY_NAME}.pem" ]; then
           echo "Error: ${KEY_NAME}.pem not found"
           ls -la $GITHUB_WORKSPACE
-          exit 1
+          exit 101
         fi
         chmod 400 $GITHUB_WORKSPACE/${KEY_NAME}.pem
         
