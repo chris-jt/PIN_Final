@@ -26,56 +26,10 @@ jobs:
       run: |
           aws sts get-caller-identity
           aws iam get-user
-
-  crear_roles: 
-    runs-on: ubuntu-latest 
-    needs: configurar_credenciales     
-    steps:      
-    - name: Attempt manual role creation
-      run: |
-        TRUST_POLICY='{
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Principal": {
-            "Service": "ec2.amazonaws.com"
-            },
-            "Action": "sts:AssumeRole"
-          }
-          ]
-          }'
-        aws iam create-role --role-name EC2EKSRole --assume-role-policy-document "$TRUST_POLICY"
-
-        # Adjuntar las políticas necesarias al rol
-          for policy in AmazonEKSClusterPolicy AmazonEKSWorkerNodePolicy AmazonEC2ContainerRegistryFullAccess AmazonEKS_CNI_Policy; do
-            if ! aws iam attach-role-policy --role-name EC2EKSRole --policy-arn arn:aws:iam::aws:policy/$policy; then
-            echo "Error al adjuntar la política $policy. Continuando..."
-          fi
-        done
-
-        # Crear un perfil de instancia y asociar el rol
-        if ! aws iam create-instance-profile --instance-profile-name EC2EKSProfile; then
-          echo "Error al crear el perfil de instancia. Verificando si ya existe..."
-        if ! aws iam get-instance-profile --instance-profile-name EC2EKSProfile; then
-          echo "No se pudo crear el perfil de instancia y no existe. Saliendo..."
-        exit 1
-        fi
-        fi
-
-        if ! aws iam add-role-to-instance-profile --instance-profile-name EC2EKSProfile --role-name EC2EKSRole; then
-          echo "Error al añadir el rol al perfil de instancia. Puede que ya esté asociado."
-        fi
-
-        # Esperar a que el perfil de instancia esté disponible
-        echo "Esperando a que el perfil de instancia esté disponible..."
-        aws iam wait instance-profile-exists --instance-profile-name EC2EKSProfile
-
-        echo "Rol IAM y perfil de instancia creados o verificados exitosamente"
-   
+  
   deploy-ec2: 
     runs-on: ubuntu-latest    
-    needs: crear_roles 
+    needs: configurar_credenciales 
     steps:  
     - name: Deploy EC2 instance
       env:
@@ -148,14 +102,12 @@ jobs:
           INSTANCE_ID=$(aws ec2 run-instances \
               --image-id $AMI_ID \
               --instance-type $INSTANCE_TYPE \
-              --key-name $KEY_NAME \
-              --security-group-ids ${{ steps.security_group.outputs.group_id }} \
-              --iam-instance-profile Name=EC2EKSProfile \
-              #--security-group-ids $SECURITY_GROUP_ID \
+              --key-name $KEY_NAME \         
+              --security-group-ids $SECURITY_GROUP_ID \
               --user-data file://00_ec2/ec2_user_data.sh \
               --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":8,"VolumeType":"gp2"}}]' \
               --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Jenkins}]' \
-              #--iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
+              --iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
               --query 'Instances[0].InstanceId' \
               --output text)
   
@@ -205,7 +157,7 @@ jobs:
         name: ec2-key-pair
         path: ${{ github.workspace }}/${{ env.KEY_NAME }}.pem
 
-  setup-ec2:
+  setup-ec2-and-eks:
     needs: deploy-ec2
     runs-on: ubuntu-latest
     steps:
@@ -217,7 +169,7 @@ jobs:
       with:
         name: ec2-key-pair
       
-    - name: Setup EC2 Instance
+    - name: Setup EC2 Instance and Create EKS Cluster
       env:
         PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
       run: |
@@ -233,106 +185,51 @@ jobs:
          exit 1
         fi
         chmod 400 jenkins.pem
+        # Copiar y ejecutar el script de configuración
         scp -i jenkins.pem -o StrictHostKeyChecking=no 00_ec2/ec2_user_data.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
         ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/ec2_user_data.sh && sudo /home/ubuntu/ec2_user_data.sh'
 
-  create-eks-cluster:
-    needs: [deploy-ec2, setup-ec2]
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+        # Crear cluster EKS
+        ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP << EOF
+        eksctl create cluster --name my-cluster --region us-east-1 --nodegroup-name standard-workers --node-type t3.medium --nodes 3 --nodes-min 1 --nodes-max 4 --ssh-public-key jenkins
+
+        # Configurar kubectl
+        aws eks get-token --cluster-name my-cluster | kubectl apply -f -
+          
+        # Desplegar NGINX
+        kubectl create deployment nginx --image=nginx
+        kubectl expose deployment nginx --type=LoadBalancer --port=80
+          
+        # Esperar a que el servicio esté disponible
+        echo "Esperando a que el servicio de NGINX esté disponible..."
+        kubectl wait --for=condition=available --timeout=300s deployment/nginx
+          
+        # Obtener la URL del balanceador de carga
+        NGINX_URL=$(kubectl get service nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        echo "NGINX está disponible en: http://$NGINX_URL"
+        EOF
+
+    - name: Configure IAM user for EKS console access
+      run: |
+        # Obtener el ARN del rol IAM asociado al cluster EKS
+        ROLE_ARN=$(aws eks describe-cluster --name my-cluster --query "cluster.roleArn" --output text)
         
-    - name: Download Key Pair
-      uses: actions/download-artifact@v4
-      with:
-        name: ec2-key-pair
+        # Obtener el nombre de usuario IAM actual
+        IAM_USER=$(aws sts get-caller-identity --query "Arn" --output text | cut -d'/' -f2)
         
-    - name: Create EKS Cluster
-      env:
-        PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
-      run: |
-          chmod 400 jenkins.pem
-          scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/create_eks_cluster.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
-          ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/create_eks_cluster.sh && sudo /home/ubuntu/create_eks_cluster.sh'
-
-  deploy-nginx:
-    needs: [deploy-ec2, create-eks-cluster]
-    runs-on: ubuntu-latest
-    outputs:
-      nginx_url: ${{ steps.deploy.outputs.nginx_url }}
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-                
-    - name: Download Key Pair
-      uses: actions/download-artifact@v4
-      with:
-        name: ec2-key-pair
-                
-    - name: Deploy Nginx
-      id: deploy
-      env:
-        PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
-      run: |
-          if [ -z "$PUBLIC_IP" ]; then
-            echo "Error: PUBLIC_IP is not set"
-            echo "Value of needs.deploy-ec2.outputs.public_ip: ${{ needs.deploy-ec2.outputs.public_ip }}"
-          exit 1
-          fi
-                
-          echo "Public IP: $PUBLIC_IP"
-                
-          if [ ! -f "jenkins.pem" ]; then
-            echo "Error: jenkins.pem not found"
-            ls -la
-            exit 1
-          fi
-                
-          chmod 400 jenkins.pem
-          scp -i jenkins.pem -o StrictHostKeyChecking=no 01_eksctl/deploy_nginx.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
-          EXTERNAL_IP=$(ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/deploy_nginx.sh && sudo /home/ubuntu/deploy_nginx.sh | grep EXTERNAL_IP= | cut -d= -f2')
-                
-          if [ -z "$EXTERNAL_IP" ]; then
-            echo "Error: EXTERNAL_IP is not set"
-            exit 1
-          fi
-                
-          echo "nginx_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
-          echo "Nginx URL: http://$EXTERNAL_IP"
-       
-  setup-monitoring:
-    needs: deploy-nginx
-    runs-on: ubuntu-latest
-    outputs:
-     grafana_url: ${{ steps.monitoring.outputs.grafana_url }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download Key Pair
-        uses: actions/download-artifact@v4
-        with:
-          name: ec2-key-pair
-
-      - name: Setup Monitoring
-        id: monitoring
-        env:
-          PUBLIC_IP: ${{ needs.deploy-ec2.outputs.public_ip }}
-        run: |
-          chmod 400 jenkins.pem
-          scp -i jenkins.pem -o StrictHostKeyChecking=no 04_monitoreo/setup_monitoring.sh 04_monitoreo/grafana-values.yaml ubuntu@$PUBLIC_IP:/home/ubuntu/
-          ssh -i jenkins.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/setup_monitoring.sh && sudo /home/ubuntu/setup_monitoring.sh'
-
-  display-url:
-    needs: [deploy-nginx, setup-monitoring]
-    runs-on: ubuntu-latest
-    steps:
-    - name: Display Nginx URL
-      run: |
-          echo "La aplicación Nginx está disponible en: ${{ needs.deploy-nginx.outputs.nginx_url }}"
-          echo "Grafana está disponible en: ${{ needs.setup-monitoring.outputs.grafana_url }}"
-          echo "Usuario de Grafana: admin"
-          echo "Contraseña de Grafana: EKS!sAWSome"
-          echo "Prometheus está disponible en: http://${{ needs.deploy-ec2.outputs.public_ip }}:8080"
-          echo "Puede tardar unos minutos en estar completamente accesible."
+        # Crear una política que permita asumir el rol del cluster EKS
+        POLICY_ARN=$(aws iam create-policy --policy-name EKSConsoleAccess-my-cluster --policy-document '{
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "sts:AssumeRole",
+              "Resource": "'$ROLE_ARN'"
+            }
+          ]
+        }' --query "Policy.Arn" --output text)
+        
+        # Adjuntar la política al usuario IAM
+        aws iam attach-user-policy --user-name $IAM_USER --policy-arn $POLICY_ARN
+        
+        echo "El usuario IAM $IAM_USER ahora tiene acceso a la consola EKS para el cluster my-cluster"
