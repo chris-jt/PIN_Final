@@ -8,19 +8,29 @@ wait_for_apt() {
     sleep 5
   done
 }
+handle_error() {
+  echo "Error en la línea $1"
+  exit 1
+}
 
+trap 'handle_error $LINENO' ERR
 
 echo "Preparando el sistema..."
 sudo mount -o remount,rw /
-sudo fsck -fy /
-sudo mv /usr/lib/cnf-update-db /usr/lib/cnf-update-db.bak
+
+echo "Limpiando posibles bloqueos de apt..."
+sudo rm -f /var/lib/apt/lists/lock
+sudo rm -f /var/cache/apt/archives/lock
+sudo rm -f /var/lib/dpkg/lock*
+
+echo "Deshabilitando temporalmente command-not-found..."
+sudo mv /usr/lib/cnf-update-db /usr/lib/cnf-update-db.bak || true
 sudo touch /usr/lib/cnf-update-db
 sudo chmod +x /usr/lib/cnf-update-db
 
 echo "Limpiando y actualizando APT..."
 sudo apt-get clean
 sudo apt-get update --fix-missing
-sudo apt-get upgrade -y
 
 echo "Installing Unzip"
 wait_for_apt
@@ -71,5 +81,8 @@ helm repo update
 
 echo "All necessary tools have been installed."
 
+echo "Verificando conexión a internet..."
+ping -c 4 8.8.8.8
 
+sudo reboot
 

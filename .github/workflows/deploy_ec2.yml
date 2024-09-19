@@ -113,6 +113,12 @@ jobs:
         echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
         echo "EC2 instance is now running with Public IP: $PUBLIC_IP"
 
+    - name: Save key pair as artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: ec2-key-pair
+        path: ${{ github.workspace }}/${KEY_NAME}.pem
+
     - name: Setup EC2 and Create EKS Cluster
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
