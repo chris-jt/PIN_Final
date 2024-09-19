@@ -146,14 +146,14 @@ jobs:
         
         # Crear cluster EKS
         ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP << EOF
-          eksctl create cluster --name my-cluster --region us-east-1 --nodegroup-name standard-workers --node-type t3.medium --nodes 3 --nodes-min 1 --nodes-max 4 --ssh-public-key jenkins
+        eksctl create cluster --name my-cluster --region us-east-1 --nodegroup-name standard-workers --node-type t3.medium --nodes 3 --nodes-min 1 --nodes-max 4 --ssh-public-key jenkins
           
-          # Configurar kubectl
-          aws eks get-token --cluster-name my-cluster | kubectl apply -f -
+        # Configurar kubectl
+        aws eks get-token --cluster-name my-cluster | kubectl apply -f -
           
-          # Desplegar NGINX
-          kubectl create deployment nginx --image=nginx
-          kubectl expose deployment nginx --type=LoadBalancer --port=80
+        # Desplegar NGINX
+        kubectl create deployment nginx --image=nginx
+        kubectl expose deployment nginx --type=LoadBalancer --port=80
           
           # Esperar a que el servicio esté disponible
           echo "Esperando a que el servicio de NGINX esté disponible..."

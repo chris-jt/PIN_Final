@@ -8,12 +8,19 @@ wait_for_apt() {
     sleep 5
   done
 }
-# Al inicio del script
-echo "Limpiando posibles bloqueos de apt..."
-sudo rm -f /var/lib/apt/lists/lock
-sudo rm -f /var/cache/apt/archives/lock
-sudo rm -f /var/lib/dpkg/lock*
-sudo dpkg --configure -a
+
+
+echo "Preparando el sistema..."
+sudo mount -o remount,rw /
+sudo fsck -fy /
+sudo mv /usr/lib/cnf-update-db /usr/lib/cnf-update-db.bak
+sudo touch /usr/lib/cnf-update-db
+sudo chmod +x /usr/lib/cnf-update-db
+
+echo "Limpiando y actualizando APT..."
+sudo apt-get clean
+sudo apt-get update --fix-missing
+sudo apt-get upgrade -y
 
 echo "Installing Unzip"
 wait_for_apt
