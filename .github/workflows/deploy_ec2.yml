@@ -141,15 +141,35 @@ jobs:
         
         # Esperar a que la instancia esté lista para conexiones SSH
         echo "Waiting for instance to be ready for SSH connections..."
-        while ! ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$PUBLIC_IP echo "SSH connection successful" > /dev/null 2>&1; do
-          echo "Retrying SSH connection..."
-          sleep 10
+        TIMEOUT=300
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          if ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$PUBLIC_IP echo "SSH connection successful"; then
+          echo "SSH connection established"
+          break
+          fi
+        echo "Retrying SSH connection..."
+        sleep 10
+        ELAPSED=$((ELAPSED+10))
         done
+
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          echo "Error: Timeout waiting for SSH connection"
+          exit 102
+        fi
 
         # Copiar y ejecutar el script de configuración
         scp -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no 00_ec2/ec2_user_data.sh ubuntu@$PUBLIC_IP:/home/ubuntu/
         ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'chmod +x /home/ubuntu/ec2_user_data.sh && sudo /home/ubuntu/ec2_user_data.sh'
         
+        # Verificar si el script se ejecutó correctamente
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to execute ec2_user_data.sh"
+          echo "Retrieving script output..."
+          ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'cat /var/log/cloud-init-output.log'
+          exit 103
+        fi
+
         # Crear cluster EKS
         ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP << EOF
         eksctl create cluster --name my-cluster --region us-east-1 --nodegroup-name standard-workers --node-type t3.medium --nodes 3 --nodes-min 1 --nodes-max 4 --ssh-public-key jenkins
@@ -169,6 +189,18 @@ jobs:
           NGINX_URL=$(kubectl get service nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "NGINX está disponible en: http://$NGINX_URL"
           EOF
+
+    - name: Retrieve logs if setup fails
+      if: failure()
+      env:
+        PUBLIC_IP: ${{ env.PUBLIC_IP }}
+      run: |
+        if [ -n "$PUBLIC_IP" ]; then
+          echo "Retrieving cloud-init-output.log..."
+          ssh -i $GITHUB_WORKSPACE/${KEY_NAME}.pem -o StrictHostKeyChecking=no ubuntu@$PUBLIC_IP 'sudo cat /var/log/cloud-init-output.log'
+        else
+          echo "Cannot retrieve logs: PUBLIC_IP is not set"
+        fi
 
     - name: Configure IAM user for EKS console access
       env:
